@@ -2,7 +2,7 @@
 /*
 Plugin Name: Jerome's Keywords
 Plugin URI: http://vapourtrails.ca/wp-keywords
-Version: 1.4
+Version: 1.5-alpha
 Description: Allows keywords to be associated with each post.  These keywords can be used for page meta tags, included in posts for site searching or linked like Technorati tags.
 Author: Jerome Lavigne
 Author URI: http://vapourtrails.ca
@@ -35,6 +35,9 @@ Author URI: http://vapourtrails.ca
 */
 
 /* ChangeLog:
+
+23-Mar-2005:  Version 1.5
+		- Early alpha release includes functions all_keywords() and get_all_keywords() for creating a "tag cosmos".
 
 13-Mar-2005:  Version 1.4
 		- Added ability to automatically generate .htaccess rewrite rules for keyword searches.
@@ -312,6 +315,55 @@ function the_search_keytag() {
 }
 
 
+/***** Tag cosmos fun *****/
+function get_all_keywords() {
+	global $wpdb;
+	
+/*	if ($include_cats && isset($cache_categories)) {
+		foreach($cache_categories as $category)
+			$keywordarray[$category->cat_name] += 1;
+	}
+*/
+		
+	$metakeys = $wpdb->get_results("SELECT meta_id, meta_value
+									FROM  $wpdb->postmeta
+									WHERE meta_key = '" . KEYWORDS_META . "'");
+	if (is_array($metakeys)) {
+		foreach($metakeys as $post_meta) {
+			if (!empty($post_meta->meta_value)) {
+				$post_keys = explode(',', $post_meta->meta_value);
+				
+				foreach($post_keys as $keyword) {
+					$keyword = trim($keyword);
+					if (!empty($keyword))
+						$keywordarray[ $keyword ] += 1;
+				}
+			}
+		}
+	}
+	ksort($keywordarray);
+	
+	return($keywordarray);
+}
+
+function all_keywords($element='<li class="cosmos keyword%count%"><a href="/tag/%keylink%">%keyword%</a></li>') {
+	
+	$allkeys = get_all_keywords($include_cats);
+	
+	$keywords = "";
+	if (is_array($allkeys)) {
+		foreach($allkeys as $key => $count) {
+			$keytemp = str_replace('%count%', $count, $element);
+			$keytemp = str_replace('%keyword%', str_replace(' ', '&nbsp;', $key), $keytemp);
+			$keytemp = str_replace('%keylink%', str_replace('%2F', '/', urlencode($key)), $keytemp);
+			$keywords .= $keytemp . ' ';
+		}
+	}
+	
+	echo $keywords;
+}
+
+
 
 /***** Add actions *****/
 
@@ -345,7 +397,7 @@ function keywords_edit_form() {
 
 	// output HTML & JS
 	echo "
-		<fieldset id=\"postkeywords\" style=\"clear: both;\">
+		<fieldset id=\"postkeywords\">
 			<legend>Keywords</legend>
 			<div>
 				<textarea rows=\"1\" cols=\"40\" name=\"keywords_list\" tabindex=\"4\" id=\"keywords_list\" style=\"margin-left: 1%; width: 98%; height: 1.8em;\">$post_keywords</textarea>
