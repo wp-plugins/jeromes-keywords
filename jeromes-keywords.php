@@ -2,7 +2,7 @@
 /*
 Plugin Name: Jerome's Keywords
 Plugin URI: http://vapourtrails.ca/wp-keywords
-Version: 1.5-alpha
+Version: 1.5-beta
 Description: Allows keywords to be associated with each post.  These keywords can be used for page meta tags, included in posts for site searching or linked like Technorati tags.
 Author: Jerome Lavigne
 Author URI: http://vapourtrails.ca
@@ -36,8 +36,14 @@ Author URI: http://vapourtrails.ca
 
 /* ChangeLog:
 
-23-Mar-2005:  Version 1.5
-		- Early alpha release includes functions all_keywords() and get_all_keywords() for creating a "tag cosmos".
+27-Mar-2005:  Version 1.5-beta
+		- Added functions all_keywords() and get_all_keywords() for creating a "tag cosmos".
+		- Added functions top_keywords() and get_top_keywords() to return a "Top X Tags" list.
+		- Fixed slashes bug in get_the_search_keytag().
+		- Fixed get_the_keywords() routine:
+			- no longer lists duplicate keywords
+			- only relevant categories are output, except on the home page where all are shown (can be overridden with parameters)
+		- Added filter for adding keywords to pages.
 
 13-Mar-2005:  Version 1.4
 		- Added ability to automatically generate .htaccess rewrite rules for keyword searches.
@@ -152,6 +158,7 @@ if (isset($wp_rewrite) && $wp_rewrite->using_permalinks()) {
 	define('KEYWORDS_LINKBASE', '');							// don't need this
 }
 
+
 /* use in the loop*/
 function get_the_post_keywords($include_cats=true) {
 	$keywords = '';
@@ -160,16 +167,19 @@ function get_the_post_keywords($include_cats=true) {
 		$categories = get_the_category();
 		foreach($categories as $category) {
 			if (!empty($keywords))
-				$keywords .= ", ";
+				$keywords .= ",";
 			$keywords .= $category->cat_name;
 		}
 	}	
 
 	$post_keywords = get_post_custom_values(KEYWORDS_META);
-	if (!empty($keywords))
-		$keywords .= ", ";
-	$keywords .= $post_keywords[0];
-	
+	if (is_array($post_keywords)) {
+		foreach($post_keywords as $post_keys) {
+			if (!empty($post_keys))
+				$keywords .= ",";
+			$keywords .= $post_keys;
+		}
+	}
 	return( $keywords );
 }
 
@@ -268,22 +278,38 @@ function the_post_keytags($include_cats=false, $localsearch=true, $linktitle=fal
 }
 
 /* works outside the loop*/
-function get_the_keywords($before='', $after='', $separator=',') {
-	global $cache_categories, $post_meta_cache;
+function get_the_keywords($before='', $after='', $separator=',', $include_cats='default') {
+	global $cache_categories, $category_cache, $post_meta_cache;
 	
 	$keywords = "";
 	
-	if (isset($cache_categories)) {
-		foreach($cache_categories as $category)
-			$keywordarray[$category->cat_name] += 1;
+	if ($include_cats) {
+		if ( isset($cache_categories) && ( ($include_cats == 'all') ||
+		                                  (($include_cats == 'default') && is_home()) ) ) {
+			foreach($cache_categories as $category)
+				$keywordarray[$category->cat_name] += 1;
+		} elseif (isset($category_cache)) {
+			foreach($category_cache as $post_category) {
+				foreach($post_category as $category)
+					$keywordarray[$category->cat_name] += 1;
+			}
+		}
 	}
-		
+	
 	if (isset($post_meta_cache)) {
-		foreach($post_meta_cache as $post_meta)
-			$keywordarray[ $post_meta[KEYWORDS_META][0] ] += 1;
+		foreach($post_meta_cache as $post_meta) {
+			if (is_array($post_meta[KEYWORDS_META])) {
+				foreach($post_meta[KEYWORDS_META] as $post_keys) {
+					$keywordlist = explode(",", $post_keys);
+					foreach($keywordlist as $keyvalue)
+						if (!empty($keyvalue))
+							$keywordarray[$keyvalue] += 1;
+				}
+			}
+		}
 	}
 
-	if (isset($keywordarray)) {
+	if (is_array($keywordarray)) {
 		foreach($keywordarray as $key => $count) {
 			if (!empty($keywords))
 				$keywords .= $separator;
@@ -307,7 +333,8 @@ function is_keyword() {
 }
 
 function get_the_search_keytag() {
-	return($GLOBALS[KEYWORDS_QUERYVAR]);
+	$searchtag = stripslashes($GLOBALS[KEYWORDS_QUERYVAR]);
+	return(get_magic_quotes_gpc() ? stripslashes($searchtag) : $searchtag);
 }
 
 function the_search_keytag() {
@@ -315,19 +342,28 @@ function the_search_keytag() {
 }
 
 
-/***** Tag cosmos fun *****/
-function get_all_keywords() {
-	global $wpdb;
+/***** Tag cosmos functions *****/
+function get_all_keywords($include_cats = false) {
+	global $wpdb, $cache_categories;
 	
-/*	if ($include_cats && isset($cache_categories)) {
-		foreach($cache_categories as $category)
-			$keywordarray[$category->cat_name] += 1;
+	if ($include_cats && isset($cache_categories)) {
+		$catkeys = $wpdb->get_results("SELECT p2c.category_id AS cat_id, COUNT(p2c.rel_id) AS cat_count
+										FROM  $wpdb->post2cat p2c, $wpdb->posts posts
+										WHERE posts.ID = p2c.post_id
+										  AND posts.post_status IN('publish', 'static')
+										GROUP BY p2c.category_id");
+		if (is_array($catkeys)) {
+			foreach($catkeys as $category)
+				$keywordarray[ $cache_categories[$category->cat_id]->cat_name . 
+								'::Category::' . $category->cat_id ] += $category->cat_count;
+		}
 	}
-*/
-		
-	$metakeys = $wpdb->get_results("SELECT meta_id, meta_value
-									FROM  $wpdb->postmeta
-									WHERE meta_key = '" . KEYWORDS_META . "'");
+
+	$metakeys = $wpdb->get_results("SELECT meta.meta_id, meta.meta_value
+									FROM  $wpdb->posts posts, $wpdb->postmeta meta
+									WHERE posts.ID = meta.post_id
+									  AND posts.post_status IN('publish', 'static')
+									  AND meta.meta_key = '" . KEYWORDS_META . "'");
 	if (is_array($metakeys)) {
 		foreach($metakeys as $post_meta) {
 			if (!empty($post_meta->meta_value)) {
@@ -346,23 +382,107 @@ function get_all_keywords() {
 	return($keywordarray);
 }
 
-function all_keywords($element='<li class="cosmos keyword%count%"><a href="/tag/%keylink%">%keyword%</a></li>') {
+function all_keywords($element = '<li class="cosmos keyword%count%"><a href="/tag/%keylink%">%keyword%</a></li>',
+                      $element_cat = '', $min_scale = 1, $max_scale = false, $min_include = 0) {
+	
+	$include_cats = !empty($element_cat);
 	
 	$allkeys = get_all_keywords($include_cats);
 	
-	$keywords = "";
+	$keywords = '';
 	if (is_array($allkeys)) {
+		
+		// scaling
+		if ($max_scale !== false) {
+			$pre_scale = min($allkeys);
+			$pre_scale = ($pre_scale < $min_include) ? $min_include : $pre_scale;
+			$scale_factor = ($max_scale - $min_scale) / (max($allkeys) - $pre_scale);
+		}
+	
 		foreach($allkeys as $key => $count) {
-			$keytemp = str_replace('%count%', $count, $element);
-			$keytemp = str_replace('%keyword%', str_replace(' ', '&nbsp;', $key), $keytemp);
-			$keytemp = str_replace('%keylink%', str_replace('%2F', '/', urlencode($key)), $keytemp);
-			$keywords .= $keytemp . ' ';
+			if ($count >= $min_include) {
+				if ($max_scale !== false)
+					$keycount = (int) (($count - $pre_scale) * $scale_factor + $min_scale);
+				else
+					$keycount = $count + $min_scale - 1;
+				
+				// need to do category stuff first so that we can decide between $element and $element_cat at the outset
+				if ($include_cats && (strstr($key, '::Category::'))) {
+					$keycat = explode('::Category::', $key);
+					$key = $keycat[0];
+					$keytemp = str_replace('%keylink%', get_category_link((int)$keycat[1]), $element_cat);
+				} else
+					$keytemp = str_replace('%keylink%', str_replace('%2F', '/', urlencode($key)), $element);
+
+				$keytemp = str_replace('%count%', $keycount, $keytemp);
+				if (strstr($keytemp, '%em%')) {
+					$keytemp = str_replace('%em%', str_repeat('<em>', $keycount), $keytemp);
+					$keytemp = str_replace('%/em%', str_repeat('</em>', $keycount), $keytemp);
+				}
+				$keytemp = str_replace('%keyword%', str_replace(' ', '&nbsp;', $key), $keytemp);
+				$keywords .= $keytemp . ' ';
+			}
 		}
 	}
-	
 	echo $keywords;
 }
 
+
+/***** Top keywords/tags functions *****/
+function get_top_keywords($number = false, $include_cats = false, $min_include = 0) {
+	global $wpdb, $cache_categories;
+
+	$allkeys = get_all_keywords($include_cats);
+
+	$topkeys = array();
+	if (is_array($allkeys)) {
+	
+		arsort($allkeys);
+		if (($number <= 0) && ($min_include <= 1))
+			return($allkeys);
+		
+		$topcount = 0;
+		foreach ($allkeys as $key => $count) {
+			if ($count >= $min_include) {
+				$topkeys[$key] = $count;
+				$topcount++;
+			}
+			if (($number > 0) && ($topcount >= $number))
+				break;
+		}
+	}
+	return($topkeys);
+}
+
+function top_keywords($number = false, $element='<li><a href="/tag/%keylink%">%keyword%</a></li>',
+                      $element_cat = '', $min_include = 0) {
+	
+	$include_cats = !empty($element_cat);
+	
+	$topkeys = get_top_keywords($number, $include_cats, $min_include);
+	
+	$keywords = '';
+	if (is_array($topkeys)) {
+		foreach($topkeys as $key => $count) {
+			// need to do category stuff first so that we can decide between $element and $element_cat at the outset
+			if ($include_cats && (strstr($key, '::Category::'))) {
+				$keycat = explode('::Category::', $key);
+				$key = $keycat[0];
+				$keytemp = str_replace('%keylink%', get_category_link((int)$keycat[1]), $element_cat);
+			} else
+				$keytemp = str_replace('%keylink%', str_replace('%2F', '/', urlencode($key)), $element);
+
+			$keytemp = str_replace('%count%', $count, $keytemp);
+			if (strstr($keytemp, '%em%')) {
+				$keytemp = str_replace('%em%', str_repeat('<em>', $keycount), $keytemp);
+				$keytemp = str_replace('%/em%', str_repeat('</em>', $keycount), $keytemp);
+			}
+			$keytemp = str_replace('%keyword%', str_replace(' ', '&nbsp;', $key), $keytemp);
+			$keywords .= $keytemp . ' ';
+		}
+	}
+	echo $keywords;
+}
 
 
 /***** Add actions *****/
@@ -370,6 +490,7 @@ function all_keywords($element='<li class="cosmos keyword%count%"><a href="/tag/
 /* editing */
 add_filter('simple_edit_form', 'keywords_edit_form');
 add_filter('edit_form_advanced', 'keywords_edit_form');
+add_filter('edit_page_form', 'keywords_edit_form');
 add_filter('edit_post', 'keywords_update');
 add_filter('publish_post', 'keywords_update');
 add_filter('save_post', 'keywords_update');
@@ -395,7 +516,6 @@ function keywords_edit_form() {
 
 	$post_keywords = get_post_meta($postdata->ID, 'keywords', true);
 
-	// output HTML & JS
 	echo "
 		<fieldset id=\"postkeywords\">
 			<legend>Keywords</legend>
