@@ -2,7 +2,7 @@
 /*
 Plugin Name: Jerome's Keywords
 Plugin URI: http://vapourtrails.ca/wp-keywords
-Version: 1.5-beta
+Version: 1.5
 Description: Allows keywords to be associated with each post.  These keywords can be used for page meta tags, included in posts for site searching or linked like Technorati tags.
 Author: Jerome Lavigne
 Author URI: http://vapourtrails.ca
@@ -26,17 +26,13 @@ Author URI: http://vapourtrails.ca
 */
 
 /* Credits:
-	Special thanks to Stephanie Booth (http://climbtothestars.org), whose excellent "Bunny's Technorati Tags" plugin
-	was a great learning resource.  Her plugin is responsible for my use of the get/add/delete_post_meta() functions
-	rather than trying to access the database directly.
-	
-	Thanks also to Dave Metzener, Mark Eckenrode, Dan Taarin and others who have provided feedback, spotted bugs,
-	and suggested improvements.
+	Special thanks also to Dave Metzener, Mark Eckenrode, Dan Taarin, N. Godbout, "theanomaly", "oso", Wayne @ AcmeTech, Will Luke
+	and others who have provided feedback, spotted bugs, and suggested improvements.
 */
 
 /* ChangeLog:
 
-27-Mar-2005:  Version 1.5-beta
+16-Apr-2005:  Version 1.5
 		- Added functions all_keywords() and get_all_keywords() for creating a "tag cosmos".
 		- Added functions top_keywords() and get_top_keywords() to return a "Top X Tags" list.
 		- Fixed slashes bug in get_the_search_keytag().
@@ -44,6 +40,7 @@ Author URI: http://vapourtrails.ca
 			- no longer lists duplicate keywords
 			- only relevant categories are output, except on the home page where all are shown (can be overridden with parameters)
 		- Added filter for adding keywords to pages.
+		- Added fix for conflicting JOINs on wp_postmeta (or how to make friends with other plugins) and removed mini-posts "fix"
 
 13-Mar-2005:  Version 1.4
 		- Added ability to automatically generate .htaccess rewrite rules for keyword searches.
@@ -430,7 +427,6 @@ function all_keywords($element = '<li class="cosmos keyword%count%"><a href="/ta
 
 /***** Top keywords/tags functions *****/
 function get_top_keywords($number = false, $include_cats = false, $min_include = 0) {
-	global $wpdb, $cache_categories;
 
 	$allkeys = get_all_keywords($include_cats);
 
@@ -491,9 +487,9 @@ function top_keywords($number = false, $element='<li><a href="/tag/%keylink%">%k
 add_filter('simple_edit_form', 'keywords_edit_form');
 add_filter('edit_form_advanced', 'keywords_edit_form');
 add_filter('edit_page_form', 'keywords_edit_form');
-add_filter('edit_post', 'keywords_update');
-add_filter('publish_post', 'keywords_update');
-add_filter('save_post', 'keywords_update');
+add_action('edit_post', 'keywords_update');
+add_action('publish_post', 'keywords_update');
+add_action('save_post', 'keywords_update');
 
 /* for keyword/tag queries */
 add_filter('query_vars', 'keywords_addQueryVar');
@@ -514,7 +510,7 @@ if (KEYWORDS_ATOMTAGSON) {
 function keywords_edit_form() {
 	global $postdata;
 
-	$post_keywords = get_post_meta($postdata->ID, 'keywords', true);
+	$post_keywords = get_post_meta($postdata->ID, KEYWORDS_META, true);
 
 	echo "
 		<fieldset id=\"postkeywords\">
@@ -527,7 +523,6 @@ function keywords_edit_form() {
 }
 
 function keywords_update($id) {
-	global $wpdb;
 
 	// remove old value
 	delete_post_meta($id, KEYWORDS_META);
@@ -576,11 +571,7 @@ function keywords_parseQuery() {
 		$wp_query->is_archive = false;
 		$wp_query->is_search = false;
 		$wp_query->is_home = false;
-
-		// mini-posts plugin doesn't play nice with this plugin
-        remove_filter('posts_where', 'mini_posts_where');
-        remove_filter('posts_join', 'mini_posts_join');
-
+		
 		add_filter('posts_where', 'keywords_postsWhere');
 		add_filter('posts_join', 'keywords_postsJoin');
 		add_action('template_redirect', 'keywords_includeTemplate');
@@ -588,15 +579,14 @@ function keywords_parseQuery() {
 }
 
 function keywords_postsWhere($where) {
-	global $wpdb;
-	$where .= " AND $wpdb->postmeta.meta_key = '" . KEYWORDS_META . "' ";
-	$where .= " AND $wpdb->postmeta.meta_value LIKE '%" . $GLOBALS[KEYWORDS_QUERYVAR] . "%' ";
+	$where .= " AND jkeywords_meta.meta_key = '" . KEYWORDS_META . "' ";
+	$where .= " AND jkeywords_meta.meta_value LIKE '%" . $GLOBALS[KEYWORDS_QUERYVAR] . "%' ";
 	return ($where);
 }
 
 function keywords_postsJoin($join) {
 	global $wpdb;
-	$join .= " LEFT JOIN $wpdb->postmeta ON ($wpdb->posts.ID = $wpdb->postmeta.post_id) ";
+	$join .= " LEFT JOIN $wpdb->postmeta AS jkeywords_meta ON ($wpdb->posts.ID = jkeywords_meta.post_id) ";
 	return ($join);
 }
 
@@ -613,7 +603,7 @@ function keywords_includeTemplate() {
 			$template = get_category_template();
 		
 		if ($template) {
-			include($template);
+			load_template($template);
 			exit;
 		}
 	}
