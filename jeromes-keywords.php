@@ -2,7 +2,7 @@
 /*
 Plugin Name: Jerome's Keywords
 Plugin URI: http://vapourtrails.ca/wp-keywords
-Version: 1.5
+Version: 1.6
 Description: Allows keywords to be associated with each post.  These keywords can be used for page meta tags, included in posts for site searching or linked like Technorati tags.
 Author: Jerome Lavigne
 Author URI: http://vapourtrails.ca
@@ -31,6 +31,10 @@ Author URI: http://vapourtrails.ca
 */
 
 /* ChangeLog:
+
+9-May-2005:  Version 1.6
+		- Tag cosmos now uses a natural case-insensitive sort.
+		- Added a very simple keyword suggestion feature when editing posts (suggestions refresh after every save)
 
 16-Apr-2005:  Version 1.5
 		- Added functions all_keywords() and get_all_keywords() for creating a "tag cosmos".
@@ -145,6 +149,7 @@ define('KEYWORDS_TAGURL', 'tag');								// URL to use when querying tags
 define('KEYWORDS_TEMPLATE', 'keywords.php');					// template file to use for displaying tag queries
 define('KEYWORDS_SEARCHURL', 'search');							// local search URL (from mod_rewrite rules)
 define('KEYWORDS_REWRITERULES', '1');							// flag to determine if plugin can change WP rewrite rules
+define('KEYWORDS_SUGGESTED', '8');								// maximum number of keywords suggested
 
 /* Shouldn't need to change this - can set to 0 if you want to force permalinks off */
 if (isset($wp_rewrite) && $wp_rewrite->using_permalinks()) {
@@ -374,7 +379,7 @@ function get_all_keywords($include_cats = false) {
 			}
 		}
 	}
-	ksort($keywordarray);
+	uksort($keywordarray, 'strnatcasecmp');
 	
 	return($keywordarray);
 }
@@ -508,16 +513,39 @@ if (KEYWORDS_ATOMTAGSON) {
 
 /***** Callback functions *****/
 function keywords_edit_form() {
-	global $postdata;
+	global $postdata, $content;
 
 	$post_keywords = get_post_meta($postdata->ID, KEYWORDS_META, true);
 
+    $top_keywords = get_top_keywords();
+    
+    $suggested = array();
+    
+    foreach($top_keywords as $keyword=>$keycount) {
+        if (stristr($content, $keyword)) {
+            $suggested[] = $keyword;
+            if (count($suggested) >= KEYWORDS_SUGGESTED)
+                break;
+        }
+    }
+    if (count($suggested) < KEYWORDS_SUGGESTED) {
+        foreach($top_keywords as $keyword=>$keycount) {
+            if (!in_array($keyword, $suggested)) {
+                $suggested[] = $keyword;
+                if (count($suggested) >= KEYWORDS_SUGGESTED)
+                    break;
+            }
+        }
+    }
+    $suggested_keys = implode(', ', $suggested);
+    
 	echo "
 		<fieldset id=\"postkeywords\">
 			<legend>Keywords</legend>
 			<div>
-				<textarea rows=\"1\" cols=\"40\" name=\"keywords_list\" tabindex=\"4\" id=\"keywords_list\" style=\"margin-left: 1%; width: 98%; height: 1.8em;\">$post_keywords</textarea>
-			</div>
+                <textarea rows=\"1\" cols=\"40\" name=\"keywords_list\" tabindex=\"4\" id=\"keywords_list\" style=\"margin-left: 1%; width: 97%; height: 1.8em;\">$post_keywords</textarea>
+                <br /> <div style=\"font-size: 80%; margin-left: 1%;\">Suggested Keywords: <em>$suggested_keys</em> </div>
+				</div>
 		</fieldset>
 		";
 }
