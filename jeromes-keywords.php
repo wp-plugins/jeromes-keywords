@@ -2,7 +2,7 @@
 /*
 Plugin Name: Jerome's Keywords
 Plugin URI: http://vapourtrails.ca/wp-keywords
-Version: 1.6
+Version: 1.7
 Description: Allows keywords to be associated with each post.  These keywords can be used for page meta tags, included in posts for site searching or linked like Technorati tags.
 Author: Jerome Lavigne
 Author URI: http://vapourtrails.ca
@@ -26,11 +26,17 @@ Author URI: http://vapourtrails.ca
 */
 
 /* Credits:
-	Special thanks also to Dave Metzener, Mark Eckenrode, Dan Taarin, N. Godbout, "theanomaly", "oso", Wayne @ AcmeTech, Will Luke
-	and others who have provided feedback, spotted bugs, and suggested improvements.
+	Special thanks also to Dave Metzener, Mark Eckenrode, Dan Taarin, N. Godbout, "theanomaly", "oso", Wayne @ AcmeTech, Will Luke,
+	Gyu-In Lee, Denis de Bernardy and the many others who have provided feedback, spotted bugs, and suggested improvements.
 */
 
 /* ChangeLog:
+
+20-Jun-2005:  Version 1.7
+		- Fixed uksort bug that appeared on the edit page when there are no keywords in the database.
+		- Fixed divide-by-zero error in all_keywords() scaling routine.
+		- Local keyword search now includes pages
+		- Added ability to create flickr- and del.icio.us-safe keyword links for use in cosmos/top-X keywords lists.
 
 9-May-2005:  Version 1.6
 		- Tag cosmos now uses a natural case-insensitive sort.
@@ -219,7 +225,7 @@ function get_the_post_keytags($include_cats=false, $localsearch="tag", $linktitl
 		foreach($categories as $category) {
 			$keyword = $category->cat_name;
 			if ($linkmode == 'technorati')
-				$taglink = KEYWORDS_TECHNORATI . "/" . str_replace('%2F', '/', urlencode($keyword));
+				$taglink = KEYWORDS_TECHNORATI . "/" . jkeywords_localLink($keyword);
 			else
 				$taglink = get_category_link($category->category_id);
 			$tagtitle = empty($linktitle) ? "" : " title=\"$linktitle $keyword\"";
@@ -243,17 +249,17 @@ function get_the_post_keytags($include_cats=false, $localsearch="tag", $linktitl
 					case 'tag':
 						if (KEYWORDS_REWRITEON)
 							$taglink = get_settings('home') . '/' . KEYWORDS_LINKBASE . KEYWORDS_TAGURL . 
-										'/' . str_replace('%2F', '/', urlencode($keyword));
+										'/' . jkeywords_localLink($keyword);
 						else
 							$taglink = get_settings('home') . "/?" . KEYWORDS_TAGURL .  "=" . urlencode($keyword);
 						break;
 					case 'technorati':
-						$taglink = KEYWORDS_TECHNORATI . "/" . str_replace('%2F', '/', urlencode($keyword));
+						$taglink = KEYWORDS_TECHNORATI . "/" . jkeywords_localLink($keyword);
 						break;
 					case 'search':
 						if (KEYWORDS_REWRITEON)
 							$taglink = get_settings('home') . '/' . KEYWORDS_LINKBASE . KEYWORDS_SEARCHURL . 
-										'/' . str_replace('%2F', '/', urlencode($keyword));
+										'/' . jkeywords_localLink($keyword);
 						else
 							$taglink = get_settings('home') . '/?s=' . urlencode($keyword) . '&submit=Search';
 						break;
@@ -379,9 +385,26 @@ function get_all_keywords($include_cats = false) {
 			}
 		}
 	}
-	uksort($keywordarray, 'strnatcasecmp');
+    
+    if(is_array($keywordarray))
+        uksort($keywordarray, 'strnatcasecmp');
 	
 	return($keywordarray);
+}
+
+function jkeywords_localLink($keyword) {
+    return str_replace('%2F', '/', urlencode($keyword));
+}
+
+function jkeywords_flickrLink($keyword) {
+    return urlencode(preg_replace('/[^a-zA-Z0-9]/', '', strtolower($keyword)));
+}
+
+function jkeywords_deliciousLink($keyword) {
+    $del = preg_replace('/\s/', '', $keyword);
+    if (strstr($del, '+'))
+        $del = '"' . $del . '"';
+    return str_replace('%2F', '/', rawurlencode($del));
 }
 
 function all_keywords($element = '<li class="cosmos keyword%count%"><a href="/tag/%keylink%">%keyword%</a></li>',
@@ -398,7 +421,9 @@ function all_keywords($element = '<li class="cosmos keyword%count%"><a href="/ta
 		if ($max_scale !== false) {
 			$pre_scale = min($allkeys);
 			$pre_scale = ($pre_scale < $min_include) ? $min_include : $pre_scale;
-			$scale_factor = ($max_scale - $min_scale) / (max($allkeys) - $pre_scale);
+			$spread = (max($allkeys) - $pre_scale);
+            $spread = ($spread > 0 ? $spread : 1);
+            $scale_factor = ($max_scale - $min_scale) / $spread;
 		}
 	
 		foreach($allkeys as $key => $count) {
@@ -413,9 +438,13 @@ function all_keywords($element = '<li class="cosmos keyword%count%"><a href="/ta
 					$keycat = explode('::Category::', $key);
 					$key = $keycat[0];
 					$keytemp = str_replace('%keylink%', get_category_link((int)$keycat[1]), $element_cat);
-				} else
-					$keytemp = str_replace('%keylink%', str_replace('%2F', '/', urlencode($key)), $element);
-
+					$keytemp = str_replace('%flickr%', get_category_link((int)$keycat[1]), $keytemp);
+					$keytemp = str_replace('%delicious%', get_category_link((int)$keycat[1]), $keytemp);
+				} else {
+					$keytemp = str_replace('%keylink%', jkeywords_localLink($key), $element);
+					$keytemp = str_replace('%flickr%', jkeywords_flickrLink($key), $keytemp);
+					$keytemp = str_replace('%delicious%', jkeywords_deliciousLink($key), $keytemp);
+                }
 				$keytemp = str_replace('%count%', $keycount, $keytemp);
 				if (strstr($keytemp, '%em%')) {
 					$keytemp = str_replace('%em%', str_repeat('<em>', $keycount), $keytemp);
@@ -470,9 +499,14 @@ function top_keywords($number = false, $element='<li><a href="/tag/%keylink%">%k
 				$keycat = explode('::Category::', $key);
 				$key = $keycat[0];
 				$keytemp = str_replace('%keylink%', get_category_link((int)$keycat[1]), $element_cat);
-			} else
-				$keytemp = str_replace('%keylink%', str_replace('%2F', '/', urlencode($key)), $element);
-
+				$keytemp = str_replace('%flickr%', get_category_link((int)$keycat[1]), $keytemp);
+				$keytemp = str_replace('%delicious%', get_category_link((int)$keycat[1]), $keytemp);
+			} else {
+				$keytemp = str_replace('%keylink%', jkeywords_localLink($key), $element);
+				$keytemp = str_replace('%flickr%', jkeywords_flickrLink($key), $keytemp);
+				$keytemp = str_replace('%delicious%', jkeywords_deliciousLink($key), $keytemp);
+			}
+            
 			$keytemp = str_replace('%count%', $count, $keytemp);
 			if (strstr($keytemp, '%em%')) {
 				$keytemp = str_replace('%em%', str_repeat('<em>', $keycount), $keytemp);
@@ -609,6 +643,10 @@ function keywords_parseQuery() {
 function keywords_postsWhere($where) {
 	$where .= " AND jkeywords_meta.meta_key = '" . KEYWORDS_META . "' ";
 	$where .= " AND jkeywords_meta.meta_value LIKE '%" . $GLOBALS[KEYWORDS_QUERYVAR] . "%' ";
+
+    // include pages in search (from jeromes-search.php)
+    $where = str_replace(' AND (post_status = "publish"', ' AND ((post_status = \'static\' OR post_status = \'publish\')', $where);
+    
 	return ($where);
 }
 
