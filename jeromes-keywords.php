@@ -2,7 +2,7 @@
 /*
 Plugin Name: Jerome's Keywords
 Plugin URI: http://vapourtrails.ca/wp-keywords
-Version: 1.7
+Version: 1.8
 Description: Allows keywords to be associated with each post.  These keywords can be used for page meta tags, included in posts for site searching or linked like Technorati tags.
 Author: Jerome Lavigne
 Author URI: http://vapourtrails.ca
@@ -31,6 +31,9 @@ Author URI: http://vapourtrails.ca
 */
 
 /* ChangeLog:
+
+23-Jun-2005:  Version 1.8
+		- Fixed bug in get_the_post_keytag() that did not return a valid category link.
 
 20-Jun-2005:  Version 1.7
 		- Fixed uksort bug that appeared on the edit page when there are no keywords in the database.
@@ -227,7 +230,7 @@ function get_the_post_keytags($include_cats=false, $localsearch="tag", $linktitl
 			if ($linkmode == 'technorati')
 				$taglink = KEYWORDS_TECHNORATI . "/" . jkeywords_localLink($keyword);
 			else
-				$taglink = get_category_link($category->category_id);
+				$taglink = get_category_link($category->cat_ID);
 			$tagtitle = empty($linktitle) ? "" : " title=\"$linktitle $keyword\"";
 			
 			if (!empty($output))
